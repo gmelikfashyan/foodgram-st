@@ -17,7 +17,7 @@ def custom_exception_handler(exc, context):
     if isinstance(exc, NotAuthenticated):
         return Response(
             {"detail": "Учетные данные не были предоставлены."},
-            status=status.HTTP_401_UNAUTHORIZED
+            status=status.HTTP_401_UNAUTHORIZED,
         )
 
     return response

@@ -37,33 +37,35 @@
 
 ### Шаги запуска
 
-1. Клонируйте репозиторий:
+# Запуск проекта
 
+### Требования
+- Docker
+- Docker Compose
+
+### Установка
+```bash
+# 1. Клонируйте репозиторий
 git clone https://github.com/gmelikfashyan/foodgram-st.git
 cd infra
 
-2. Запустите сборку и запуск инфраструктуры с помощью Docker Compose:
+# 2. Запустите контейнеры
+docker-compose up -d --build
 
-docker-compose up -d
-
-3. Проверьте, что сервисы запущены:
-
+# 3. Проверьте статус сервисов
 docker-compose ps
 
-4. Выполните миграции:
-
+# 4. Примените миграции
 docker compose exec backend python manage.py migrate
 
-5. Создайте суперпользователя:
-
+# 5. Создайте суперпользователя
 docker compose exec backend python manage.py createsuperuser
 
-6. Загрузите статику
-
+# 6. Соберите статику
 docker compose exec backend python manage.py collectstatic --no-input
 
-4. Страница сайта доступна по адресу:
-
+7. Страница сайта доступна по адресу:
+ 
 http://localhost
 
 ---

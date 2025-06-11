@@ -4,7 +4,8 @@ from django.contrib.auth.admin import UserAdmin
 
 user = get_user_model()
 
+
 @admin.register(user)
 class UserRegister(UserAdmin):
-    list_display = ('username', 'email', 'first_name', 'last_name')
-    search_fields = ('username', 'email')
+    list_display = ("username", "email", "first_name", "last_name")
+    search_fields = ("username", "email")
