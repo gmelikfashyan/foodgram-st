@@ -1,9 +1,12 @@
 import base64
+import io
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from djoser.serializers import UserSerializer, UserCreateSerializer
 from recipes.models import Ingredient, Recipe, AmountIngredientInRecipe
+from django.conf import settings
+from PIL import Image
 
 User = get_user_model()
 
@@ -48,6 +51,12 @@ class CustomCreateUserSerializer(UserCreateSerializer):
             field.error_messages["blank"] = "Обязательное поле."
 
 
+class CustomUserCreateResponseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("id", "username", "first_name", "last_name", "email")
+
+
 class IngredientSerializer(serializers.ModelSerializer):
     measurement_unit = serializers.CharField(
         source="measurment", read_only=True
@@ -73,7 +82,10 @@ class AmountIngredientInRecipeSerializer(serializers.ModelSerializer):
 
 class RecipeIngredientCreateSerializer(serializers.Serializer):
     id = serializers.IntegerField()
-    amount = serializers.IntegerField(min_value=1)
+    amount = serializers.IntegerField(
+        min_value=settings.MIN_AMOUNT_VALUE,
+        max_value=settings.MAX_AMOUNT_VALUE
+    )
 
 
 class RecipeSerializer(serializers.ModelSerializer):
@@ -132,7 +144,11 @@ class Base64ImageField(serializers.ImageField):
 
 
 class RecipeCreateSerializer(serializers.ModelSerializer):
-    cooking_time = serializers.IntegerField(source="cookingTime", min_value=1)
+    cooking_time = serializers.IntegerField(
+        source="cookingTime",
+        min_value=settings.MIN_COOKING_TIME,
+        max_value=settings.MAX_COOKING_TIME
+    )
     ingredients = RecipeIngredientCreateSerializer(many=True, required=True)
     text = serializers.CharField(source="description")
     image = Base64ImageField(required=True)
@@ -141,14 +157,31 @@ class RecipeCreateSerializer(serializers.ModelSerializer):
         model = Recipe
         fields = ("name", "image", "text", "cooking_time", "ingredients")
         extra_kwargs = {"author": {"read_only": True}}
+    
+    def _process_ingredients_in_recipe(self, recipe, ingredients):
+        if hasattr(recipe, 'amountingredientinrecipe_set'):
+            recipe.amountingredientinrecipe_set.all().delete()
+        
+        ingredient_objects = []
+        for ingredient in ingredients:
+            ingredient_objects.append(
+                AmountIngredientInRecipe(
+                    ingredient_id=ingredient["id"],
+                    amount=ingredient["amount"],
+                    recipe=recipe
+                )
+            )
+        
+        AmountIngredientInRecipe.objects.bulk_create(ingredient_objects)
 
     def to_internal_value(self, data):
         validated_data = super().to_internal_value(data)
 
         ingredients = data.get("ingredients", [])
-        print(ingredients)
-        if len(ingredients) == 0:
-            raise serializers.ValidationError("Ингредиенты не переданы")
+        if not ingredients:
+            raise serializers.ValidationError(
+                {"ingredients": ["Ингредиенты не переданы"]}
+            )
         ingredients_serializer = RecipeIngredientCreateSerializer(
             data=ingredients, many=True
         )
@@ -160,20 +193,17 @@ class RecipeCreateSerializer(serializers.ModelSerializer):
     def validate_ingredients(self, value):
         if not value:
             raise serializers.ValidationError("Ингредиенты не переданы")
-        all_ingredients = []
+
+        all_ingredients = set()
         for ingredient in value:
             ingredient_id = ingredient["id"]
             if ingredient_id in all_ingredients:
                 raise serializers.ValidationError("Ингредиент не уникален")
-            all_ingredients.append(ingredient_id)
+            all_ingredients.add(ingredient_id)
 
             if not Ingredient.objects.filter(id=ingredient_id).exists():
                 raise serializers.ValidationError(
                     f"Ингредиента с {id} id не существует."
-                )
-            if ingredient["amount"] < 1:
-                raise serializers.ValidationError(
-                    "Количество ингредиента должно быть боьльше 1"
                 )
 
         return value
@@ -182,89 +212,16 @@ class RecipeCreateSerializer(serializers.ModelSerializer):
         ingredients = validated_data.pop("ingredients")
         validated_data["author"] = self.context["request"].user
         recipe = Recipe.objects.create(**validated_data)
-        print(self.context["request"].user)
-        for ingredient in ingredients:
-            ingredient_object = Ingredient.objects.get(id=ingredient["id"])
-            amount = ingredient["amount"]
-            AmountIngredientInRecipe.objects.create(
-                ingredient=ingredient_object, amount=amount, recipe=recipe
-            )
+        self._process_ingredients_in_recipe(recipe, ingredients)
         return recipe
-
-    def to_representation(self, instance):
-        return RecipeSerializer(instance, context=self.context).data
-
-
-class RecipeUpdateSerializer(serializers.ModelSerializer):
-    cooking_time = serializers.IntegerField(source="cookingTime", min_value=1)
-    ingredients = RecipeIngredientCreateSerializer(many=True, required=True)
-    text = serializers.CharField(source="description")
-    image = Base64ImageField(required=False)
-
-    class Meta:
-        model = Recipe
-        fields = ("name", "image", "text", "cooking_time", "ingredients")
-        extra_kwargs = {"author": {"read_only": True}}
-
-    def to_internal_value(self, data):
-        try:
-            validated_data = super().to_internal_value(data)
-            if "ingredients" not in data:
-                raise serializers.ValidationError(
-                    {"ingredients": ["Ингредиенты не переданы"]}
-                )
-
-            ingredients = data.get("ingredients", [])
-            ingredients_serializer = RecipeIngredientCreateSerializer(
-                data=ingredients, many=True
-            )
-            ingredients_serializer.is_valid(raise_exception=True)
-            validated_data["ingredients"] = (
-                ingredients_serializer.validated_data
-            )
-
-            return validated_data
-        except serializers.ValidationError:
-            raise
-        except Exception as e:
-            raise serializers.ValidationError({"error": [str(e)]})
-
-    def validate_ingredients(self, value):
-        print(value)
-        if not value:
-            raise serializers.ValidationError("Ингредиенты не переданы")
-
-        all_ingredients = []
-        print(value)
-        for ingredient in value:
-            ingredient_id = ingredient["id"]
-            if ingredient_id in all_ingredients:
-                raise serializers.ValidationError("Ингредиент не уникален")
-            all_ingredients.append(ingredient_id)
-
-            if not Ingredient.objects.filter(id=ingredient_id).exists():
-                raise serializers.ValidationError(
-                    f"Ингредиента с {id} id не существует."
-                )
-            if ingredient["amount"] < 1:
-                raise serializers.ValidationError(
-                    "Количество ингредиента должно быть боьльше 1"
-                )
-
-        return value
-
+    
     def update(self, instance, validated_data):
         ingredients = validated_data.pop("ingredients", None)
 
         instance = super().update(instance, validated_data)
 
         instance.amountingredientinrecipe_set.all().delete()
-        for ingredient in ingredients:
-            ingredient_object = Ingredient.objects.get(id=ingredient["id"])
-            amount = ingredient["amount"]
-            AmountIngredientInRecipe.objects.create(
-                ingredient=ingredient_object, amount=amount, recipe=instance
-            )
+        self._process_ingredients_in_recipe(instance, ingredients)
         return instance
 
     def to_representation(self, instance):
@@ -336,3 +293,60 @@ class SetPasswordSerializer(serializers.Serializer):
     new_password = serializers.CharField(
         required=True, error_messages={"required": "Обязательное поле."}
     )
+
+    def validate_current_password(self, value):
+        user = self.context['request'].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Неверный текущий пароль")
+        return value
+
+class AvatarSerializer(serializers.ModelSerializer):
+    avatar = serializers.CharField(write_only=True)
+    
+    class Meta:
+        model = User
+        fields = ('avatar',)
+    
+    def validate_avatar(self, value):
+        if not value:
+            raise serializers.ValidationError("Это поле обязательно.")
+        
+        try:
+            if isinstance(value, str) and value.startswith("data:image"):
+                image_data = value.split("base64,")[-1]
+            else:
+                image_data = value
+            
+            decoded_image = base64.b64decode(image_data)
+            
+            image = Image.open(io.BytesIO(decoded_image))
+            image.verify()
+            
+            image = Image.open(io.BytesIO(decoded_image))
+            image_format = image.format.lower() if image.format else None
+            if not image_format:
+                raise serializers.ValidationError("Некорректный формат переданного файла")
+            
+            return (decoded_image, image_format)
+            
+        except Exception as e:
+            raise serializers.ValidationError(f"Ошибка обработки изображения: {str(e)}")
+    
+    def update(self, instance, validated_data):
+        decoded_image, image_format = validated_data['avatar']
+        filename = f"{instance.id}.{image_format}"
+        instance.image.save(filename, ContentFile(decoded_image))
+        instance.save()
+        return instance
+    
+    def to_representation(self, instance):
+        return {
+            'avatar': instance.image.url
+        }
+    
+class AvatarDeleteSerializer(serializers.Serializer):
+    def validate(self, attrs):
+        user = self.context.get('request').user
+        if not user.image:
+            raise serializers.ValidationError("У пользователя нет аватара")
+        return attrs

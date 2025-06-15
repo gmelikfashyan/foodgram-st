@@ -1,7 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.db import models
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db.models import CheckConstraint, Q, F, UniqueConstraint
+from django.conf import settings
 
 User = get_user_model()
 
@@ -25,6 +26,7 @@ class Follow(models.Model):
     class Meta:
         verbose_name = "Подписка"
         verbose_name_plural = "Подписки"
+        ordering = ['-id']
         constraints = (
             UniqueConstraint(
                 fields=("user", "following"),
@@ -72,6 +74,9 @@ class Ingredient(models.Model):
             )
         ]
 
+    def __str__(self):
+        return f"{self.name} ({self.measurment})"
+
 
 class Recipe(models.Model):
     author = models.ForeignKey(
@@ -91,10 +96,21 @@ class Recipe(models.Model):
         Ingredient, through="AmountIngredientInRecipe"
     )
 
-    cookingTime = models.IntegerField(
+    cookingTime = models.PositiveSmallIntegerField(
         validators=[
             MinValueValidator(
-                1, "Время приготовления не может быть меньше 1 минуты"
+                settings.MIN_COOKING_TIME,
+                message=(
+                    f"Время приготовления не может быть "
+                    f"меньше {settings.MIN_COOKING_TIME} минуты"
+                )
+            ),
+            MaxValueValidator(
+                settings.MAX_COOKING_TIME,
+                message=(
+                    f"Время приготовления не может быть "
+                    f"больше {settings.MAX_COOKING_TIME} минут"
+                )
             )
         ],
         verbose_name="Время приготовления (в минутах)",
@@ -105,6 +121,9 @@ class Recipe(models.Model):
         verbose_name_plural = "Рецепты"
         ordering = ["-id"]
 
+    def __str__(self):
+        return f"{self.name} Автор: {self.author.first_name} {self.author.last_name}"
+
 
 class AmountIngredientInRecipe(models.Model):
     recipe = models.ForeignKey(
@@ -114,10 +133,21 @@ class AmountIngredientInRecipe(models.Model):
         Ingredient, on_delete=models.CASCADE, verbose_name="Ингредиент"
     )
 
-    amount = models.PositiveIntegerField(
+    amount = models.PositiveSmallIntegerField(
         validators=[
             MinValueValidator(
-                1, "Количество ингредиента не должго быть меньше 1"
+                settings.MIN_AMOUNT_VALUE,
+                message=(
+                    f"Время приготовления не может быть "
+                    f"меньше {settings.MIN_AMOUNT_VALUE} минуты"
+                )
+            ),
+            MaxValueValidator(
+                settings.MAX_AMOUNT_VALUE,
+                message=(
+                    f"Время приготовления не может быть "
+                    f"больше {settings.MAX_AMOUNT_VALUE} минут"
+                )
             )
         ],
         verbose_name="Количество ингредиента",
@@ -126,6 +156,7 @@ class AmountIngredientInRecipe(models.Model):
     class Meta:
         verbose_name = "Ингредиент в рецепте"
         verbose_name_plural = "Ингредиенты в рецептах"
+        ordering = ('recipe', 'ingredient')
         constraints = [
             models.UniqueConstraint(
                 fields=["recipe", "ingredient"],
@@ -166,19 +197,33 @@ class UserFavorite(UserRecipeRelation):
     class Meta:
         verbose_name = "Избранный рецепт"
         verbose_name_plural = "Избранные рецепты"
+        ordering = ["-id"]
         constraints = [
             models.UniqueConstraint(
                 fields=["recipe", "user"], name="unique_recipe_user"
             )
         ]
 
+    def __str__(self):
+        return (
+            f"Рецепт {self.recipe.name} добавлен"
+            f" в избранное {self.user.username}"
+        )
+
 
 class WishList(UserRecipeRelation):
     class Meta:
         verbose_name = "Список покупок"
         verbose_name_plural = "Списки покупок"
+        ordering = ["-id"]
         constraints = [
             models.UniqueConstraint(
                 fields=["user", "recipe"], name="unique_shopping_cart"
             )
         ]
+
+    def __str__(self):
+        return (
+            f"Рецепт {self.recipe.name} добавлен"
+            f" в список покупок {self.user.username}"
+        )
